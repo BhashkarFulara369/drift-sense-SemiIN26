@@ -10,14 +10,13 @@ Applied Materials branded UI with real-time SEM localization visualization.
 import streamlit as st
 import cv2
 import numpy as np
-from PIL import Image, ImageDraw
-import io
+from PIL import Image
+import time
 import sys
 import os
 
-# Add parent directory to path to import predict
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from predict import DriftSenseSolver
+# Import the actual physics-engine
+from localize import DriftSenseEngine
 
 # ============================================================
 # PAGE CONFIG & CORPORATE STYLING
@@ -34,6 +33,7 @@ AMAT_DARK   = "#0F1C36"
 AMAT_LIGHT  = "#E8F4FD"
 AMAT_GREEN  = "#00C896"
 AMAT_RED    = "#FF4B4B"
+AMAT_ORANGE = "#FF9900"
 
 st.markdown(f"""
 <style>
@@ -72,7 +72,9 @@ st.markdown(f"""
   /* ── Halt badges ── */
   .halt-ok   {{ background:{AMAT_GREEN}22; color:{AMAT_GREEN}; border:1px solid {AMAT_GREEN}55;
                 padding:6px 14px; border-radius:20px; font-weight:700; display:inline-block; }}
-  .halt-warn {{ background:{AMAT_RED}22;   color:{AMAT_RED};   border:1px solid {AMAT_RED}55;
+  .halt-warn {{ background:{AMAT_ORANGE}22; color:{AMAT_ORANGE}; border:1px solid {AMAT_ORANGE}55;
+                padding:6px 14px; border-radius:20px; font-weight:700; display:inline-block; }}
+  .halt-err  {{ background:{AMAT_RED}22;   color:{AMAT_RED};   border:1px solid {AMAT_RED}55;
                 padding:6px 14px; border-radius:20px; font-weight:700; display:inline-block; }}
 
   /* ── Section divider ── */
@@ -106,41 +108,35 @@ def load_image_bytes(uploaded) -> np.ndarray:
     pil_img = Image.open(uploaded)
     return np.array(pil_img)
 
-
 def draw_overlay(search_np: np.ndarray, pred_x: float, pred_y: float,
-                  sigma_x: float, sigma_y: float, half_box: float = 50.0) -> Image.Image:
+                 status: str, half_box: float = 50.0) -> Image.Image:
     """
     Draws on the search image:
-      - Green bounding box (predicted region)
-      - Green crosshair lines
-      - Red 2σ uncertainty ellipse
+      - Bounding box (Green for Determinate, Orange for Ambiguous/Tie-Breaker)
+      - Crosshair lines
     """
-    if len(search_np.shape) == 2:          # grayscale → RGB for drawing
+    if len(search_np.shape) == 2:
         vis = cv2.cvtColor(search_np.astype(np.uint8), cv2.COLOR_GRAY2RGB)
     else:
         vis = search_np.copy().astype(np.uint8)
 
-    # --- Bounding box (green) ---
+    color = (0, 255, 80) if status == "DETERMINATE" else (255, 165, 0)
+
+    # --- Bounding box ---
     x1 = int(pred_x - half_box)
     y1 = int(pred_y - half_box)
     x2 = int(pred_x + half_box)
     y2 = int(pred_y + half_box)
-    cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 255, 80), 2)
+    cv2.rectangle(vis, (x1, y1), (x2, y2), color, 2)
 
-    # --- Crosshair (bright green) ---
+    # --- Crosshair ---
     cx, cy = int(pred_x), int(pred_y)
     cross_len = 20
-    cv2.line(vis, (cx - cross_len, cy), (cx + cross_len, cy), (0, 255, 80), 2)
-    cv2.line(vis, (cx, cy - cross_len), (cx, cy + cross_len), (0, 255, 80), 2)
-    cv2.circle(vis, (cx, cy), 4, (0, 255, 80), -1)
-
-    # --- 2σ Uncertainty Ellipse (red) ---
-    ax = max(4, int(2 * sigma_x))
-    ay = max(4, int(2 * sigma_y))
-    cv2.ellipse(vis, (cx, cy), (ax, ay), 0, 0, 360, (255, 80, 80), 2)
+    cv2.line(vis, (cx - cross_len, cy), (cx + cross_len, cy), color, 2)
+    cv2.line(vis, (cx, cy - cross_len), (cx, cy + cross_len), color, 2)
+    cv2.circle(vis, (cx, cy), 4, color, -1)
 
     return Image.fromarray(vis)
-
 
 def metric_card_html(label: str, value: str, unit: str = "") -> str:
     return f"""
@@ -150,7 +146,6 @@ def metric_card_html(label: str, value: str, unit: str = "") -> str:
       <div class="metric-unit">{unit}</div>
     </div>"""
 
-
 # ============================================================
 # SIDEBAR
 # ============================================================
@@ -158,27 +153,23 @@ with st.sidebar:
     st.markdown("## 🔬 Drift-Sense Controls")
     st.markdown("---")
 
-    rgb_mode = st.toggle("🌈 RGB Optical Microscope Mode", value=False,
-                         help="Enable for 3-channel optical images (bonus mode)")
+    rgb_mode = st.toggle("🌈 RGB Optical Mode", value=False,
+                         help="Enable for 3-channel optical images")
     st.markdown("---")
-    st.markdown("### ⚙️ Algorithm Parameters")
-    sigma_prior = st.slider("Stage Encoder Prior σ (px)", 50, 300, 150, 25,
-                            help="Gaussian prior width for Bayesian MAP spatial penalty")
-    conf_thresh  = st.slider("Confidence Threshold", 0.30, 0.95, 0.70, 0.05,
-                             help="Below this → Safety Halt triggered")
-    unc_thresh   = st.slider("Uncertainty Threshold (px)", 1.0, 10.0, 3.0, 0.5,
-                             help="Above this → Safety Halt triggered")
+    st.markdown("### ⚙️ Deterministic Parameters")
+    conf_thresh  = st.slider("n95 Danger Threshold", 0.0, 1.0, 0.70, 0.05,
+                             help="Above this → Image is Ambiguous")
 
     st.markdown("---")
     st.markdown("""
     <div style='font-size:0.78rem; color:#5a9fd4; line-height:1.6;'>
-    <b>Algorithm Pipeline</b><br>
-    1. Laplacian-Sobel Hybrid Edge Map<br>
-    2. 15-angle Rotation Search Pyramid<br>
-    3. Bayesian MAP Spatial Prior<br>
-    4. 2D Paraboloid Sub-pixel Fit<br>
-    5. Inverse-Hessian Uncertainty σ<br>
-    6. Industrial Safety Halt Gate
+    <b>Physics-Aware Pipeline</b><br>
+    1. Scale/Rotation Phase Correlation<br>
+    2. Global ZNCC Matching<br>
+    3. LER Residual Verification<br>
+    4. <b>AMAT Center Tie-Breaker</b><br>
+    5. 2D Paraboloid Sub-pixel Fit<br>
+    6. n95 Determinacy Verification
     </div>
     """, unsafe_allow_html=True)
 
@@ -190,15 +181,14 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-
 # ============================================================
 # MAIN LAYOUT
 # ============================================================
 st.markdown("""
 <div class="amat-header">
   <h1>🔬 Drift-Sense</h1>
-  <p>AI-Powered Navigation-Error Recovery for Wafer Inspection Tools &nbsp;|&nbsp;
-     Physics-Informed Bayesian Phase-Correlation Localization &nbsp;|&nbsp;
+  <p>Physics-Aware Deterministic Sub-Pixel Navigation Recovery &nbsp;|&nbsp;
+     Zero Machine Learning Dependencies &nbsp;|&nbsp;
      Applied Materials Problem Statement</p>
 </div>
 """, unsafe_allow_html=True)
@@ -219,62 +209,52 @@ with col_srch:
 
 # ── Action Button ──
 st.markdown("")
-run_btn = st.button("🚀  Run Drift-Sense Recovery Solver",
+run_btn = st.button("🚀 Run Drift-Sense Physics Engine",
                     type="primary",
                     use_container_width=True,
                     disabled=(ref_file is None or srch_file is None))
 
 # ── Results Area ──
 if run_btn and ref_file and srch_file:
-    with st.spinner("⚙️ Solving — Bayesian MAP correlation in progress…"):
-        # Save uploaded files to temp paths
-        import tempfile, pathlib
+    with st.spinner("⚙️ Solving — Extracting LER Fingerprints & Parabolic Fitting…"):
+        
+        ref_img = cv2.imdecode(np.frombuffer(ref_file.read(), np.uint8), cv2.IMREAD_GRAYSCALE)
+        srch_img = cv2.imdecode(np.frombuffer(srch_file.read(), np.uint8), cv2.IMREAD_GRAYSCALE)
 
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_ref:
-            tmp_ref.write(ref_file.read())
-            ref_tmp_path = tmp_ref.name
+        engine = DriftSenseEngine()
+        
+        start_t = time.time()
+        pred_x, pred_y, diagnostics = engine.localize(ref_img, srch_img)
+        latency = (time.time() - start_t) * 1000
 
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_srch:
-            tmp_srch.write(srch_file.read())
-            srch_tmp_path = tmp_srch.name
-
-        solver = DriftSenseSolver()
-        solver.sigma_prior = sigma_prior
-        result = solver.predict(ref_tmp_path, srch_tmp_path)
-
-        os.unlink(ref_tmp_path)
-        os.unlink(srch_tmp_path)
-
-    if result.get("status") == "ERROR":
-        st.error(f"❌ Solver Error: {result.get('message')}")
-    else:
-        pred_x    = result["x"]
-        pred_y    = result["y"]
-        conf      = result["confidence"]
-        sigma_x   = result["sigma_x"]
-        sigma_y   = result["sigma_y"]
-        theta     = result["theta_deg"]
-        latency   = result["latency_ms"]
-        halt_flag = result["safety_halt_flag"]
+        forensics = diagnostics['forensics']
+        n95 = forensics.n95_score
+        status = forensics.status
+        tie_occurred = diagnostics.get('tie_occurred', False)
 
         st.markdown('<div class="section-title">📊 Recovery Results</div>', unsafe_allow_html=True)
 
         # ── Metric Cards ──
         c1, c2, c3, c4, c5 = st.columns(5)
         with c1:
-            st.markdown(metric_card_html("Predicted X", f"{pred_x:.2f}", "pixels"), unsafe_allow_html=True)
+            st.markdown(metric_card_html("Target X", f"{pred_x:.2f}", "pixels"), unsafe_allow_html=True)
         with c2:
-            st.markdown(metric_card_html("Predicted Y", f"{pred_y:.2f}", "pixels"), unsafe_allow_html=True)
+            st.markdown(metric_card_html("Target Y", f"{pred_y:.2f}", "pixels"), unsafe_allow_html=True)
         with c3:
-            st.markdown(metric_card_html("Confidence", f"{conf*100:.1f}", "%"), unsafe_allow_html=True)
+            st.markdown(metric_card_html("n95 Ambiguity", f"{n95:.3f}", "ratio"), unsafe_allow_html=True)
         with c4:
             st.markdown(metric_card_html("Latency", f"{latency:.1f}", "ms"), unsafe_allow_html=True)
         with c5:
-            badge_cls = "halt-warn" if halt_flag else "halt-ok"
-            badge_txt = "⛔ HALT" if halt_flag else "✅ CLEAR"
+            if status == "DETERMINATE":
+                badge_cls = "halt-ok"
+                badge_txt = "✅ DETERMINATE"
+            else:
+                badge_cls = "halt-warn"
+                badge_txt = "⚠️ AMBIGUOUS"
+                
             st.markdown(f"""
             <div class="metric-card">
-              <div class="metric-label">Safety Halt</div>
+              <div class="metric-label">Engine Status</div>
               <div style="margin-top:10px;">
                 <span class="{badge_cls}">{badge_txt}</span>
               </div>
@@ -286,55 +266,37 @@ if run_btn and ref_file and srch_file:
         st.markdown('<div class="section-title">🖼️ Visual Localization Output</div>', unsafe_allow_html=True)
         vis_col, info_col = st.columns([3, 1])
 
-        srch_file.seek(0)
-        search_np = np.array(Image.open(srch_file))
-
-        overlay_pil = draw_overlay(search_np, pred_x, pred_y, sigma_x, sigma_y)
+        overlay_pil = draw_overlay(srch_img, pred_x, pred_y, status)
 
         with vis_col:
-            st.image(overlay_pil, caption="Search Image — Green Box: Predicted Target | Red Ellipse: 2σ Uncertainty",
+            st.image(overlay_pil, caption="Search Image — Bounding Box indicates Parabolic Sub-Pixel Fit",
                      use_container_width=True)
 
         with info_col:
             st.markdown(f"""
             <div style="background:{AMAT_DARK};border:1px solid #0072CE44;border-radius:12px;padding:18px;font-size:0.82rem;color:#cfe3f5;line-height:1.9;">
-            <b style="color:{AMAT_BLUE};">Detection Details</b><br><br>
+            <b style="color:{AMAT_BLUE};">Engine Diagnostics</b><br><br>
             🎯 <b>Center X:</b> {pred_x:.2f} px<br>
             🎯 <b>Center Y:</b> {pred_y:.2f} px<br>
-            🔄 <b>Best Angle:</b> {theta:+.1f}°<br>
-            📐 <b>σ<sub>x</sub>:</b> {sigma_x:.2f} px<br>
-            📐 <b>σ<sub>y</sub>:</b> {sigma_y:.2f} px<br>
-            💡 <b>Confidence:</b> {conf*100:.1f}%<br>
-            ⏱️ <b>Latency:</b> {latency:.1f} ms<br><br>
-            <b style="color:{'#FF4B4B' if halt_flag else '#00C896'};">
-              {'⛔ Safety Halt Active' if halt_flag else '✅ Safe to Proceed'}
+            📐 <b>n95 Metric:</b> {n95:.3f}<br>
+            ⏱️ <b>CPU Latency:</b> {latency:.1f} ms<br><br>
+            <b style="color:{'#FF9900' if tie_occurred else '#00C896'};">
+              {'⚠️ AMAT Tie-Breaker Active' if tie_occurred else '✅ Unique LER Fingerprint'}
             </b>
             </div>
             """, unsafe_allow_html=True)
 
-            st.markdown("")
-            # Download result JSON
-            import json
-            st.download_button(
-                "⬇️ Download Result JSON",
-                data=json.dumps(result, indent=2),
-                file_name="drift_sense_result.json",
-                mime="application/json"
-            )
-
 elif not run_btn:
-    # Placeholder info
-    st.info("📂 Upload both images above, then click **Run Drift-Sense Recovery Solver** to begin localization.")
+    st.info("📂 Upload both images above, then click **Run Drift-Sense Physics Engine** to begin localization.")
     
     st.markdown('<div class="section-title">ℹ️ How It Works</div>', unsafe_allow_html=True)
-    st.markdown("""
+    st.markdown(r"""
     | Step | Operation | Purpose |
     |------|-----------|---------|
-    | 1 | **Laplacian-Sobel Hybrid Edge Map** | Noise-robust feature extraction |
-    | 2 | **10× Spatial Downscale (INTER_AREA)** | Match reference to search image scale |
-    | 3 | **15-angle Rotation Search Pyramid** | Handle ±3.5° stage rotational drift |
-    | 4 | **Bayesian MAP Spatial Prior** | Prevent pitch-hopping in periodic arrays |
-    | 5 | **2D Paraboloid Sub-pixel Fit** | Achieve <1 px landing accuracy |
-    | 6 | **Inverse-Hessian Uncertainty σ** | Quantify match confidence covariance |
-    | 7 | **Industrial Safety Halt Gate** | Prevent tool head collisions |
+    | 1 | **Log-Polar Phase Correlation** | Handles Stage $\Delta \\theta$ Rotation Drift |
+    | 2 | **ZNCC Global Matching** | Heatmap generation across wide FOV |
+    | 3 | **LER Residual Verifier** | Isolates microscopic high-frequency etch noise |
+    | 4 | **AMAT Tie-Breaker** | Safely resolves FinFET periodic repetition traps |
+    | 5 | **2D Parabolic Sub-Pixel Fit** | Exceeds discrete pixel-grid Nyquist limits |
+    | 6 | **$n_{95}$ Determinacy Metric** | Mathematically guarantees structural safety |
     """)

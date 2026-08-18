@@ -3,6 +3,18 @@
 > **Developed by Team Shunyaveer**
 > **Core Idea:** A physics-aware, deterministic sub-pixel localization engine that performs robust spectral synchronization of high-magnification reference templates within noisy, lower-magnification search spaces across semiconductor wafers.
 
+<div align="center">
+  <a href="https://huggingface.co/spaces/bf369/Drift_Sense">
+    <img src="https://img.shields.io/badge/🤗_Hugging_Face-Live_Web_App-blue?style=for-the-badge" alt="Hugging Face Spaces">
+  </a>
+  <a href="https://youtu.be/tAnGKUn75sA?si=9Hk5elJXBXGOxB3P">
+    <img src="https://img.shields.io/badge/YouTube-1--Minute_Pitch-red?style=for-the-badge&logo=youtube" alt="YouTube Pitch Video">
+  </a>
+  <a href="https://drive.google.com/file/d/14U7Pluu0Gezg7kRGG12HqvoQq9iMUUIZ/view?usp=sharing">
+    <img src="https://img.shields.io/badge/Google_Drive-Project_Document-4285F4?style=for-the-badge&logo=googledrive&logoColor=white" alt="Google Drive Document">
+  </a>
+</div>
+
 ![Team Shunyaveer](asset/team.png)
 
 ## Overview
