@@ -97,84 +97,78 @@ def compute_residual_fingerprint_score(
         M = cv2.getRotationMatrix2D(center, -candidate.rotation, 1.0)
         search_res_patch_up = cv2.warpAffine(search_res_patch_up, M, (search_res_patch_up.shape[1], search_res_patch_up.shape[0]), flags=cv2.INTER_LINEAR)
 
-    # 1. Zero-mean normalized correlation on HIGH-RES residual maps (sigma=4.0)
+    # 1. Zero-mean normalized correlation on HIGH-RES residual maps
     t_zero = ref_res - np.mean(ref_res)
     p_zero = search_res_patch_up - np.mean(search_res_patch_up)
     denom = np.sqrt(np.sum(t_zero ** 2) * np.sum(p_zero ** 2)) + 1e-8
     res_corr = float(np.sum(t_zero * p_zero) / denom)
 
-    # 2. Gradient orientation and magnitude on HIGH-RES maps
-    ref_mag, ref_orient, _, _ = compute_gradients(ref_img)
-    search_mag, search_orient, _, _ = compute_gradients(search_img)
+    # 2. Gradient orientation cosine alignment on HIGH-RES maps
+    _, ref_orient, _, _ = compute_gradients(ref_img)
+    _, search_orient, _, _ = compute_gradients(search_img)
     
-    # Extract patches and upsample
+    # Extract orientation patch and upsample
     search_orient_patch, _ = extract_patch(search_orient, candidate.x, candidate.y, search_w, search_h)
     search_orient_patch_up = cv2.resize(search_orient_patch, (ref_img.shape[1], ref_img.shape[0]), interpolation=cv2.INTER_NEAREST)
     
-    search_mag_patch, _ = extract_patch(search_mag, candidate.x, candidate.y, search_w, search_h)
-    search_mag_patch_up = cv2.resize(search_mag_patch, (ref_img.shape[1], ref_img.shape[0]), interpolation=cv2.INTER_CUBIC)
-    
     if abs(candidate.rotation) > 0.01:
         search_orient_patch_up = cv2.warpAffine(search_orient_patch_up, M, (search_orient_patch_up.shape[1], search_orient_patch_up.shape[0]), flags=cv2.INTER_NEAREST)
-        search_mag_patch_up = cv2.warpAffine(search_mag_patch_up, M, (search_mag_patch_up.shape[1], search_mag_patch_up.shape[0]), flags=cv2.INTER_LINEAR)
         
     angle_diff = np.abs(ref_orient - search_orient_patch_up)
     grad_cos_sim = float(np.mean(np.cos(angle_diff)))
-    
-    m_zero = ref_mag - np.mean(ref_mag)
-    sm_zero = search_mag_patch_up - np.mean(search_mag_patch_up)
-    mag_denom = np.sqrt(np.sum(m_zero ** 2) * np.sum(sm_zero ** 2)) + 1e-8
-    mag_corr = float(np.sum(m_zero * sm_zero) / mag_denom)
-    
-    # 3. Fine-scale highpass (sigma=1.5)
-    ref_res_fine = extract_highpass_ler(ref_img, sigma_lowpass=1.5)
-    search_res_fine = extract_highpass_ler(search_img, sigma_lowpass=1.5)
-    search_resf_patch, _ = extract_patch(search_res_fine, candidate.x, candidate.y, search_w, search_h)
-    search_resf_patch_up = cv2.resize(search_resf_patch, (ref_img.shape[1], ref_img.shape[0]), interpolation=cv2.INTER_CUBIC)
-    
-    if abs(candidate.rotation) > 0.01:
-        search_resf_patch_up = cv2.warpAffine(search_resf_patch_up, M, (search_resf_patch_up.shape[1], search_resf_patch_up.shape[0]), flags=cv2.INTER_LINEAR)
-        
-    tf_zero = ref_res_fine - np.mean(ref_res_fine)
-    pf_zero = search_resf_patch_up - np.mean(search_resf_patch_up)
-    f_denom = np.sqrt(np.sum(tf_zero ** 2) * np.sum(pf_zero ** 2)) + 1e-8
-    res_fine_corr = float(np.sum(tf_zero * pf_zero) / f_denom)
 
-    # Composite multi-channel residual fingerprint score
-    residual_fingerprint_score = 0.3 * max(0.0, res_corr) + 0.3 * max(0.0, res_fine_corr) + 0.2 * max(0.0, grad_cos_sim) + 0.2 * max(0.0, mag_corr)
-    
-    # Store individual features on the candidate for future ML reranker
-    candidate.features = {
-        'res_corr': res_corr,
-        'res_fine_corr': res_fine_corr,
-        'grad_cos_sim': grad_cos_sim,
-        'mag_corr': mag_corr,
-        'support_count': candidate.transform_support_count
-    }
-    
+    # Composite residual fingerprint score
+    residual_fingerprint_score = 0.6 * max(0.0, res_corr) + 0.4 * max(0.0, grad_cos_sim)
     return float(residual_fingerprint_score)
 
 
-def gather_parallel_evidence(
+def verify_and_rerank_candidates(
     candidates: list[Candidate],
     ref_img: np.ndarray,
-    search_img: np.ndarray
-) -> list[Candidate]:
-    """Parallel Evidence Gathering: Computes physical residuals and context for candidates.
+    search_img: np.ndarray,
+    ambiguity_threshold_pct: float = 10.0,
+    weight_zncc: float = 0.5,
+    weight_res: float = 0.5
+) -> tuple[list[Candidate], bool]:
+    """Identify ambiguous candidates within score threshold and re-rank using residual fingerprints.
     
     Args:
-        candidates: List of Candidate hypotheses.
+        candidates: List of Top-50 candidate hypotheses sorted by ZNCC score.
         ref_img: Reference image (1000x1000 px).
         search_img: Search image (1000x1000 px).
+        ambiguity_threshold_pct: Relative ZNCC score difference threshold (default 3.0%).
+        weight_zncc: Weight of ZNCC score in composite ranking.
+        weight_res: Weight of residual fingerprint score in composite ranking.
         
     Returns:
-        candidates: List of candidates with physical evidence features attached.
+        reranked_candidates: Candidates sorted by composite score descending.
+        is_ambiguous: True if ambiguity threshold was triggered across top candidates.
     """
     if not candidates:
-        return []
+        return [], False
 
-    for cand in candidates:
+    top_zncc = candidates[0].zncc_score
+    ambiguous_indices = []
+
+    for i, cand in enumerate(candidates):
+        rel_diff_pct = 100.0 * (top_zncc - cand.zncc_score) / (top_zncc + 1e-8)
+        if rel_diff_pct <= ambiguity_threshold_pct:
+            ambiguous_indices.append(i)
+
+    is_ambiguous = len(ambiguous_indices) > 1
+
+    # Evaluate residual fingerprint score for ambiguous candidates (or top 5 if not ambiguous)
+    eval_indices = ambiguous_indices if is_ambiguous else list(range(min(5, len(candidates))))
+
+    for idx in eval_indices:
+        cand = candidates[idx]
         res_score = compute_residual_fingerprint_score(ref_img, search_img, cand)
         cand.local_residual_score = res_score
+        cand.composite_score = weight_zncc * cand.zncc_score + weight_res * res_score
 
-    return candidates
+    # Re-sort candidates by composite score descending
+    reranked = sorted(candidates, key=lambda c: c.composite_score, reverse=True)
+    for r, c in enumerate(reranked, start=1):
+        c.rank = r
+
+    return reranked, is_ambiguous

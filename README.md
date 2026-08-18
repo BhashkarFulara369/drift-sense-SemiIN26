@@ -3,7 +3,7 @@
 > **Developed by Team Shunyaveer**
 > **Core Idea:** A physics-aware, deterministic sub-pixel localization engine that performs robust spectral synchronization of high-magnification reference templates within noisy, lower-magnification search spaces across semiconductor wafers.
 
-![Team Shunyaveer](asset/team.png)
+![Team Shunyaveer](file:///c:/drift-sense/asset/team.png)
 
 ## Overview
 
@@ -11,7 +11,7 @@ Modern semiconductor fabrication relies heavily on Scanning Electron Microscopes
 
 **Drift-Sense** solves this by robustly matching a 100x high-magnification Reference Image inside a wider, low-resolution 10x Search Image. We achieve sub-pixel accuracy without deep learning, utilizing deterministic periodic decomposition, spectral pose synchronization, and local Hessian surface fitting.
 
-![Project Overview](asset/image.png)
+![Project Overview](file:///c:/drift-sense/asset/image.png)
 
 ## The Dataset: Procedural Semiconductor SEM Simulator
 
@@ -55,7 +55,7 @@ Our engine substantially outperforms evaluated classical baselines on our synthe
 - **P99 Error:** 13.52 px
 - **Max Error:** 13.57 px
 
-![Baseline Comparison](asset/baseline_comparison.png)
+![Baseline Comparison](file:///c:/drift-sense/asset/baseline_comparison.png)
 
 Our solution consistently maintains low pixel error against increasing noise thresholds compared to keypoint-based matching.
 
@@ -72,9 +72,9 @@ We conducted an ablation study to isolate the contribution of each component. No
 
 ### Error Distribution & Outlier Transparency
 
-![Error Distribution](asset/error_dist.png)
-![Score Distribution](asset/score_dist.png)
-![Precision-Recall Curve](asset/pr_curve.png)
+![Error Distribution](file:///c:/drift-sense/asset/error_dist.png)
+![Score Distribution](file:///c:/drift-sense/asset/score_dist.png)
+![Precision-Recall Curve](file:///c:/drift-sense/asset/pr_curve.png)
 
 **Note on Arithmetic Mean vs. Distribution:** 
 The engine achieves extremely high pass rates within 5 px (often hitting `< 0.1 px` on easy/medium DRAM samples), which is reflected in the heavily skewed precision-recall curves and error distributions. However, a small number of catastrophic periodic ambiguity failures (especially in FinFET arrays) produce large absolute coordinate errors. These rare but significant outliers artificially inflate the arithmetic mean error. We deliberately include these outliers in our benchmarks to maintain scientific rigor and highlight the fundamental theoretical limits of local search within infinite periodic gratings.
@@ -105,7 +105,7 @@ While Drift-Sense excels at deterministic matching, there are physical and mathe
 
 A classic failure case in our pipeline occurs when processing **FinFET** semiconductor layouts. FinFETs often consist of infinite 1D periodic gratings (parallel lines). Because the repeating unit cell of a FinFET grating often contains symmetrical sub-structures (e.g., a primary fin and a dummy fin), a shift of exactly *half a pitch* (P/2) results in a mathematically identical pixel intensity array.
 
-![FinFET Half-Pitch Ambiguity](asset/finfet_ambiguity_diagram.jpg)
+![FinFET Half-Pitch Ambiguity](file:///c:/drift-sense/asset/finfet_ambiguity_diagram.jpg)
 
 When the 100x high-magnification reference image is downsampled to the 10x search image resolution, the ultra-high-frequency unique identifiers (like microscopic Line-Edge Roughness) are destroyed by Nyquist physical limits. As a result, the adjacent half-pitch line has an identical Zero-Mean Normalized Cross-Correlation (ZNCC) score. Our **AMAT Tie-Breaker** correctly triggers and selects the line closest to the stage center. If the "True Ground Truth" line was further away, the algorithm confidently selects the adjacent identical line, resulting in a reported ~12px error (exactly half the grating pitch), despite achieving a flawless sub-pixel structural alignment.
 

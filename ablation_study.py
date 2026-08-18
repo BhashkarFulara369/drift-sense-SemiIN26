@@ -57,11 +57,15 @@ def run_ablation(dataset_path: Path):
         ref_prep = preprocess_sem_image(ref_img)
         search_prep = preprocess_sem_image(search_img)
 
-        # Helper to calculate absolute global error
+        # Helper to calculate modulo error
         def calc_error(px, py):
             dx = px - gt_x
             dy = py - gt_y
-            return float(math.hypot(dx, dy))
+            rx = dx * math.cos(-angle) - dy * math.sin(-angle)
+            ry = dx * math.sin(-angle) + dy * math.cos(-angle)
+            err_x = rx - round(rx / pitch_x) * pitch_x
+            err_y = ry - round(ry / pitch_y) * pitch_y
+            return float(math.hypot(err_x, err_y))
 
         # Config A: ZNCC Only (No FFT, scale=10.0, rot=0.0)
         cands_A = generate_top_candidates(search_prep['enhanced'], ref_prep['enhanced'], init_rotation_deg=0.0, init_scale=10.0, top_k=1)
@@ -74,10 +78,8 @@ def run_ablation(dataset_path: Path):
             search_prep['enhanced'], ref_prep['enhanced'],
             init_rotation_deg=spectral_pose['rotation_deg'],
             init_scale=spectral_pose['scale_factor'],
-            top_k=100
+            top_k=50
         )
-        from src.consensus import apply_cross_transform_consensus
-        cands_B = apply_cross_transform_consensus(cands_B, top_k=50)
         if cands_B:
             # Top candidate by raw ZNCC score
             errors['B_FFT_ZNCC'].append(calc_error(cands_B[0].x, cands_B[0].y))

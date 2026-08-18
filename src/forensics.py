@@ -58,28 +58,6 @@ def compute_n95_metric(candidate_scores: list[float]) -> tuple[float, float]:
     return float(np.clip(n95_val, 0.0, 1.0)), p95_val
 
 
-def estimate_ambiguity(candidates: list[Candidate], threshold_pct: float = 3.0) -> bool:
-    """Estimates if the top candidates represent a genuine periodic tie based on score margins.
-    
-    Args:
-        candidates: Reranked candidates.
-        threshold_pct: Relative score difference to consider a tie.
-        
-    Returns:
-        True if multiple candidates are within the threshold (a tie), False otherwise.
-    """
-    if len(candidates) < 2:
-        return False
-        
-    top_score = candidates[0].composite_score
-    for cand in candidates[1:]:
-        rel_diff_pct = 100.0 * (top_score - cand.composite_score) / (top_score + 1e-8)
-        if rel_diff_pct <= threshold_pct:
-            return True
-            
-    return False
-
-
 def analyze_failure_forensics(
     candidates: list[Candidate],
     is_ambiguous: bool,
@@ -121,9 +99,6 @@ def analyze_failure_forensics(
     if top_score < 0.35 or subpixel_uncertainty_px > 0.8:
         status = "INFORMATION_LIMITED"
         explanation = f"Low correlation signal (top score {top_score:.3f}) or high SEM noise."
-    elif ambiguous_count >= 3:
-        status = "UNRESOLVABLE_PERIODIC"
-        explanation = f"Pure unresolvable periodic array: {ambiguous_count} identically scoring repeating candidates."
     elif is_ambiguous or ambiguous_count > 1 or n95_score < 0.08:
         status = "AMBIGUOUS"
         explanation = f"Periodic array ambiguity: {ambiguous_count} false candidate traps within 3% of top score."
