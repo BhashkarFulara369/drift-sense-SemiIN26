@@ -1,0 +1,46 @@
+# ==============================================================================
+# DRIFT-SENSE Git Ignore Rules — Team Shunyaveer
+# ==============================================================================
+
+# Python Bytecode & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual Environments
+venv/
+env/
+ENV/
+.venv/
+
+# Scratch & Temporary Logs
+scratch/
+*.log
+*.tmp
+*.temp
+
+# Explicit Junk Files Excluded per Competition Rules
+*.txt
+!requirements.txt
+*.tex
+datset.py
+
+# Empty files / placeholders
+.empty
+*.blank
+
+# Operating System & IDE Files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Generated Datasets
+dataset/synthetic_sem_dataset/
+dataset/large_synthetic_dataset/
+dataset/*_dataset/

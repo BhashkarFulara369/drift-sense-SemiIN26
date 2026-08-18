@@ -1,0 +1,11 @@
+# Drift-Sense SEM Dataset Generator
+# Direct dependencies only (clean list)
+
+numpy
+scipy
+opencv-python
+Pillow
+networkx
+matplotlib
+scikit-image
+streamlit
