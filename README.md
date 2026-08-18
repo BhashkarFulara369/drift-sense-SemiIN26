@@ -1,4 +1,4 @@
-# Drift-Sense: AI-Powered Navigation-Error Recovery for Wafer Inspection Tools
+# Drift-Sense: Physics-Aware Navigation-Error Recovery for Wafer Inspection Tools
 
 > **Developed by Team Shunyaveer**
 > **Core Idea:** A physics-aware, deterministic sub-pixel localization engine that performs robust spectral synchronization of high-magnification reference templates within noisy, lower-magnification search spaces across semiconductor wafers.
@@ -12,6 +12,17 @@ Modern semiconductor fabrication relies heavily on Scanning Electron Microscopes
 **Drift-Sense** solves this by robustly matching a 100x high-magnification Reference Image inside a wider, low-resolution 10x Search Image. We achieve sub-pixel accuracy without deep learning, utilizing deterministic periodic decomposition, spectral pose synchronization, and local Hessian surface fitting.
 
 ![Project Overview](asset/image.png)
+
+### Repository Structure
+```text
+drift-sense/
+├── src/                # Core Drift-Sense CV Engine (Math, Physics, Candidates)
+├── dataset/            # Procedural SEM Dataset Generator
+├── tests/              # Unit tests ensuring architectural isolation & logic
+├── localize.py         # CLI Entry Point for single-pair inference
+├── evaluate.py         # Bulk benchmark evaluation script
+└── generate_dataset.py # Wrapper to generate the synthetic SEM dataset
+```
 
 ## The Dataset: Procedural Semiconductor SEM Simulator
 
@@ -81,19 +92,20 @@ The engine achieves extremely high pass rates within 5 px (often hitting `< 0.1 
 
 ---
 
-## Frequently Asked Questions (FAQ for Applied ML Designers)
+## Core Architecture & Mathematical Foundations
 
-**Q: Why didn't you use Deep Learning (e.g., CNNs or Vision Transformers) for this task?**
-**A:** In high-stakes semiconductor fabrication, *determinism* and *explainability* are critical. A deep learning model acts as a black box and can confidently predict an incorrect location without analytical justification. Our hybrid computer vision engine is mathematically transparent, computationally lightweight (runs on CPU), and provides a precise mathematical determinacy score (n95). We define determinacy $n_{95}$ mathematically as: $n_{95} = 1 - \frac{S_{95}}{S_{max}}$ where $S_{max}$ is the peak ZNCC score and $S_{95}$ is the 95th percentile score of all candidates. A low $n_{95}$ mathematically proves the structural region is intrinsically ambiguous.
+### Determinism Over Deep Learning
+In high-stakes semiconductor metrology, *determinism* and *explainability* are critical. Rather than utilizing black-box deep learning models, our hybrid engine is mathematically transparent and computationally lightweight. We quantify prediction confidence via a strict determinacy score ($n_{95}$), defined as:
+$$n_{95} = 1 - \frac{S_{95}}{S_{max}}$$
+where $S_{max}$ is the peak ZNCC score and $S_{95}$ is the 95th percentile score of all candidates. A low $n_{95}$ provides mathematical proof that the region is intrinsically ambiguous.
 
-**Q: How do you achieve sub-pixel accuracy?**
-**A:** After identifying the top candidate via Zero-Mean Normalized Cross-Correlation (ZNCC), we isolate a local 3x3 correlation matrix around the peak. We then fit a 2D quadratic (parabolic) surface to this neighborhood. The true sub-pixel peak is the analytic apex of this parabola.
+### Sub-Pixel Surface Fitting
+To exceed integer-pixel grid limits, we isolate a local 3x3 correlation matrix around the primary ZNCC peak and fit a 2D parabolic (quadratic) surface to this neighborhood. The true sub-pixel coordinate is extracted as the analytical apex of this continuous surface.
 
-**Q: In highly periodic structures (e.g., DRAM), how do you prevent matching the wrong identical feature?**
-**A:** We use a two-step verification rule. First, we compute residual ambiguity scores by comparing periodic vs. aperiodic spectral fingerprints. Second, if multiple local maxima yield ZNCC scores that fall within a 3% statistical tie tolerance—defined mathematically as $\frac{|S_{max} - S_i|}{S_{max}} \le 0.03$—we apply the **AMAT Deterministic Tie-Breaker Rule**: we select the candidate structurally closest to the center of the Search image. This mitigates "wandering" off-target in infinite arrays.
-
-**Q: Why does the system occasionally report a ~12px or ~6px error on certain datasets instead of <0.1px?**
-**A:** Our algorithm targets < 0.1px accuracy on Easy and Medium samples where the periodic structure is well-defined and structurally un-warped. However, a larger pixel error indicates the algorithm encountered a genuine structural ambiguity (a false positive trap) that looked identical to the target. For instance, in FinFET gratings, the algorithm may lock perfectly onto an identical repeating line (a half-pitch shift), which yields a ~12px error in absolute distance but is structurally a perfect match. This is expected behavior in an ambiguous array without wider global context.
+### Resolving Periodic Ambiguities
+For highly periodic structures (e.g., DRAM), preventing off-target matches requires a two-step verification rule:
+1. We compute residual ambiguity scores by comparing periodic versus aperiodic spectral fingerprints (Line-Edge Roughness).
+2. If multiple local maxima yield ZNCC scores within a 3% statistical tie tolerance ($\frac{|S_{max} - S_i|}{S_{max}} \le 0.03$), we apply the **AMAT Deterministic Tie-Breaker Rule**: selecting the candidate structurally closest to the stage center. This strictly mitigates "wandering" off-target in theoretically infinite arrays.
 
 ---
 
@@ -134,13 +146,24 @@ python generate_dataset.py
 This generates the 30-sample test suite (Reference images, Search images, and `metadata.json`) into `dataset/synthetic_sem_dataset/`.
 
 ### 2. Running Inference on a Single Pair
+To integrate Drift-Sense into an automated wafer inspection pipeline, use the `--json` flag to receive the predicted coordinates along with the mathematical determinacy confidence score:
 ```bash
-python localize.py --reference dataset/synthetic_sem_dataset/reference/sample_001.png --search dataset/synthetic_sem_dataset/search/sample_001.png
+python localize.py --reference dataset/synthetic_sem_dataset/reference/sample_001.png --search dataset/synthetic_sem_dataset/search/sample_001.png --json
 ```
-*Output: `x.xxxx,y.xxxx`*
+*Example JSON Output:*
+```json
+{"x": 260.3532, "y": 539.0281, "n95": 0.0, "status": "AMBIGUOUS", "runtime_ms": 25.4}
+```
+*(Omit `--json` to receive legacy comma-separated coordinate output: `x.xxxx,y.xxxx`).*
 
 ### 3. Running the Full Benchmark Evaluation
 ```bash
 python evaluate.py --dataset ./dataset/synthetic_sem_dataset
 ```
 This script evaluates all 30 samples, computes Euclidean errors, pass rates, computes confusion metrics against baselines, and reports runtimes.
+
+### 4. Running Unit Tests
+We maintain strict unit tests to guarantee architectural isolation (no ML leakage) and mathematical correctness of the AMAT tie-breaker rules.
+```bash
+pytest tests/
+```
