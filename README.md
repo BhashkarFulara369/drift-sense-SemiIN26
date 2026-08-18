@@ -15,6 +15,11 @@
   </a>
 </div>
 
+**Quick Links:**
+* 🌐 **Live Web App:** [https://huggingface.co/spaces/bf369/Drift_Sense](https://huggingface.co/spaces/bf369/Drift_Sense)
+* 📺 **1-Minute Pitch Video:** [https://youtu.be/tAnGKUn75sA](https://youtu.be/tAnGKUn75sA?si=9Hk5elJXBXGOxB3P)
+* 📄 **Project Document:** [Google Drive Presentation](https://drive.google.com/file/d/14U7Pluu0Gezg7kRGG12HqvoQq9iMUUIZ/view?usp=sharing)
+
 ![Team Shunyaveer](asset/team.png)
 
 ## Overview
