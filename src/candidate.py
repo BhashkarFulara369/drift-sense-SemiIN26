@@ -22,6 +22,7 @@ class Candidate:
     rank: int
     local_residual_score: float = 0.0
     composite_score: float = 0.0
+    transform_support_count: int = 1
 
 
 def prepare_reference_template(
@@ -67,16 +68,16 @@ def generate_top_candidates(
     ref_img: np.ndarray,
     init_rotation_deg: float = 0.0,
     init_scale: float = 10.0,
-    top_k: int = 50,
+    top_k: int = 100,
     min_dist_px: int = 15,
     rotation_sweep: list[float] | None = None,
     scale_sweep: list[float] | None = None
 ) -> list[Candidate]:
     """Generate Top-K distinct 2D candidate positions across scale and rotation hypothesis sweep."""
     if rotation_sweep is None:
-        rotation_sweep = [-2.0, -1.0, 0.0, 1.0, 2.0]
+        rotation_sweep = [-4.0, -2.0, 0.0, 2.0, 4.0]
     if scale_sweep is None:
-        scale_sweep = [0.98, 1.00, 1.02]
+        scale_sweep = [0.96, 0.98, 1.00, 1.02, 1.04]
 
     all_raw_candidates = []
 
@@ -106,7 +107,7 @@ def generate_top_candidates(
     # Sort all distinct 2D peaks across sweeps by ZNCC score descending
     all_raw_candidates.sort(key=lambda c: c[0], reverse=True)
 
-    # Perform Non-Maximum Suppression (NMS) to get spatially distinct Top-K candidates
+    # Perform Non-Maximum Suppression (NMS) and accumulate transform support consensus
     selected_candidates: list[Candidate] = []
     for score, cx, cy, s_val, r_val in all_raw_candidates:
         if len(selected_candidates) >= top_k:
@@ -116,7 +117,10 @@ def generate_top_candidates(
             dist = np.hypot(cx - existing.x, cy - existing.y)
             if dist < min_dist_px:
                 too_close = True
+                # Consensus: This existing candidate is supported by another transform hypothesis
+                existing.transform_support_count += 1
                 break
+        
         if not too_close:
             rank = len(selected_candidates) + 1
             cand = Candidate(

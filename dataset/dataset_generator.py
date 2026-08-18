@@ -3141,10 +3141,9 @@ class SEMPhysicsEngine:
         rng: np.random.Generator, 
         is_search: bool = False
     ) -> np.ndarray:
-        ler_raster, height_ler = cls.apply_edge_specific_ler(clean_raster, height_map, proc, pixel_size_nm, rng)
-
-        se_yield = cls.apply_seiler_topographic_yield(height_ler, mat_map, alpha=phys.se_alpha)
-        img_float = (ler_raster.astype(np.float32) / 255.0) * se_yield
+        
+        se_yield = cls.apply_seiler_topographic_yield(height_map, mat_map, alpha=phys.se_alpha)
+        img_float = (clean_raster.astype(np.float32) / 255.0) * se_yield
 
         if is_search and (phys.charging_strength > 0 or phys.vignetting_strength > 0):
             h, w = img_float.shape
@@ -3473,6 +3472,8 @@ class LayoutEngine:
 
         cls.inject_geometry_aware_defects(canvas, height_map, mat_map, contacts, amb.repeated_defect_count, rng)
 
+        canvas, height_map = SEMPhysicsEngine.apply_edge_specific_ler(canvas, height_map, proc, 1.0, rng)
+
         return canvas, height_map, mat_map, contacts
 
     @classmethod
@@ -3744,8 +3745,8 @@ class SEMDatasetGenerator:
         search_start_x = int(rng.integers(500, master_w - search_fov_px - 500))
         search_start_y = int(rng.integers(500, master_h - search_fov_px - 500))
 
-        unwarped_gt_x = float(rng.uniform(200.0, 800.0))
-        unwarped_gt_y = float(rng.uniform(200.0, 800.0))
+        unwarped_gt_x = float(rng.uniform(150.0, 850.0))
+        unwarped_gt_y = float(rng.uniform(150.0, 850.0))
 
         ref_start_x = int(search_start_x + unwarped_gt_x * 10.0 - ref_fov_px / 2.0)
         ref_start_y = int(search_start_y + unwarped_gt_y * 10.0 - ref_fov_px / 2.0)

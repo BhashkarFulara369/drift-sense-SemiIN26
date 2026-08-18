@@ -100,9 +100,34 @@ def refine_subpixel_position(
 
     # Parabolic sub-pixel interpolation offset
     dx, dy, peak_val = parabolic_2d_subpixel(zncc_grid)
+    
+    # Phase Correlation Subpixel Refinement
+    search_patch_full, _ = extract_patch(search_img, cx_int, cy_int, tpl_w, tpl_h)
+    if search_patch_full.shape == template.shape:
+        # Apply Hanning window
+        win_y = np.hanning(tpl_h)
+        win_x = np.hanning(tpl_w)
+        window = np.outer(win_y, win_x).astype(np.float32)
+        
+        t_w = template.astype(np.float32) * window
+        s_w = search_patch_full.astype(np.float32) * window
+        
+        # shift returns (dx, dy) of search relative to template
+        shift, response = cv2.phaseCorrelate(t_w, s_w)
+        pc_dx, pc_dy = float(shift[0]), float(shift[1])
+        
+        # Guard against extreme phase correlation failures
+        if abs(pc_dx) > 2.0 or abs(pc_dy) > 2.0:
+            pc_dx, pc_dy = dx, dy
+    else:
+        pc_dx, pc_dy = dx, dy
 
-    sub_x = cx_int + dx
-    sub_y = cy_int + dy
+    # Robust average of parabolic and phase correlation offsets
+    final_dx = (dx + pc_dx) / 2.0
+    final_dy = (dy + pc_dy) / 2.0
+
+    sub_x = cx_int + final_dx
+    sub_y = cy_int + final_dy
 
     # Estimate uncertainty from local curvature (Hessian inverse trace)
     s00 = zncc_grid[1, 1]

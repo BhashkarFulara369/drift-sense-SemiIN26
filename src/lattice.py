@@ -33,6 +33,7 @@ def estimate_lattice_parameters(
 
     angles = []
     frequencies = []
+    mags = []
     for py, px, mag in peaks:
         dy = py - cy
         dx = px - cx
@@ -41,23 +42,41 @@ def estimate_lattice_parameters(
             angle = math.degrees(math.atan2(dy, dx)) % 180.0
             angles.append(angle)
             frequencies.append(r)
+            mags.append(mag)
 
     angles_arr = np.array(angles)
+    mags_arr = np.array(mags)
     rad = np.radians(angles_arr * 2.0)
-    sin_sum = np.sum(np.sin(rad))
-    cos_sum = np.sum(np.cos(rad))
-    dominant_angle_deg = (np.degrees(np.atan2(sin_sum, cos_sum)) / 2.0) % 90.0
-    if dominant_angle_deg > 45.0:
-        dominant_angle_deg -= 90.0
+    
+    # Magnitude-weighted angle sum
+    sin_sum = np.sum(mags_arr * np.sin(rad))
+    cos_sum = np.sum(mags_arr * np.cos(rad))
+    dominant_angle_deg = (np.degrees(np.atan2(sin_sum, cos_sum)) / 2.0) % 180.0
+    if dominant_angle_deg > 90.0:
+        dominant_angle_deg -= 180.0
 
-    freqs_arr = np.array(frequencies)
-    median_freq = float(np.median(freqs_arr))
-    pitch_px = (h / median_freq) if median_freq > 0 else 0.0
+    # Separate frequencies into X-aligned and Y-aligned based on dominant angle
+    freqs_x = []
+    freqs_y = []
+    
+    for ang, freq in zip(angles_arr, frequencies):
+        diff = min(abs(ang - dominant_angle_deg), 180 - abs(ang - dominant_angle_deg))
+        if diff < 15.0 or diff > 165.0:  # Aligned with dominant angle
+            freqs_x.append(freq)
+        elif abs(diff - 90.0) < 15.0:    # Orthogonal to dominant angle
+            freqs_y.append(freq)
+
+    # Use minimum fundamental frequency instead of median, to catch the primary pitch, not harmonics
+    freq_x = min(freqs_x) if freqs_x else (min(frequencies) if frequencies else 0.0)
+    freq_y = min(freqs_y) if freqs_y else (min(frequencies) if frequencies else 0.0)
+
+    pitch_x = (h / freq_x) if freq_x > 0 else 0.0
+    pitch_y = (h / freq_y) if freq_y > 0 else 0.0
 
     return {
         'rotation_deg': float(dominant_angle_deg),
-        'pitch_x_px': float(pitch_px),
-        'pitch_y_px': float(pitch_px),
+        'pitch_x_px': float(pitch_x),
+        'pitch_y_px': float(pitch_y),
         'confidence': confidence,
         'is_periodic': True
     }
@@ -81,13 +100,13 @@ def synchronize_spectral_pose(
         elif rel_rotation < -180.0:
             rel_rotation += 360.0
 
-        # Constrain rotation within small search range +/- 5 degrees
-        rel_rotation = float(np.clip(rel_rotation, -5.0, 5.0))
+        # Allow robust rotation search range up to +/- 45 degrees
+        rel_rotation = float(np.clip(rel_rotation, -45.0, 45.0))
 
-        # Scale estimation bounded within physical downsample range [9.4, 10.6]
+        # Scale estimation bounded reasonably for OOD conditions
         if search_lattice['pitch_x_px'] > 0 and ref_lattice['pitch_x_px'] > 0:
             pitch_ratio = ref_lattice['pitch_x_px'] / (search_lattice['pitch_x_px'] * nominal_scale + 1e-6)
-            if 0.90 <= pitch_ratio <= 1.10:
+            if 0.50 <= pitch_ratio <= 2.0:
                 estimated_scale = nominal_scale * pitch_ratio
             else:
                 estimated_scale = nominal_scale
@@ -97,7 +116,7 @@ def synchronize_spectral_pose(
         rel_rotation = 0.0
         estimated_scale = nominal_scale
 
-    estimated_scale = float(np.clip(estimated_scale, 9.4, 10.6))
+    estimated_scale = float(np.clip(estimated_scale, 5.0, 15.0))
 
     return {
         'rotation_deg': float(rel_rotation),

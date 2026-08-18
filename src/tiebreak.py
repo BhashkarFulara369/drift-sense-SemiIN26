@@ -20,7 +20,8 @@ def compute_distance_to_center(x: float, y: float, center: tuple[float, float] =
 def apply_amat_tiebreaker(
     candidates: list[Candidate],
     tie_tolerance: float = 0.03,
-    search_center: tuple[float, float] = (500.0, 500.0)
+    search_center: tuple[float, float] = (500.0, 500.0),
+    disable: bool = False
 ) -> tuple[Candidate, bool]:
     """Select winning candidate, breaking statistical ties using AMAT center-proximity rule.
     
@@ -28,6 +29,7 @@ def apply_amat_tiebreaker(
         candidates: List of Candidate objects sorted by composite score descending.
         tie_tolerance: Score difference threshold (default 0.03 = 3%) below which candidates are considered tied.
         search_center: Search Image center coordinates (default (500.0, 500.0)).
+        disable: If True, do not use the center-distance heuristic, just return the top candidate.
         
     Returns:
         winner: The selected Candidate object.
@@ -46,6 +48,10 @@ def apply_amat_tiebreaker(
 
     if len(tied_candidates) <= 1:
         return candidates[0], False
+
+    if disable:
+        # Return the top candidate by score without center-bias cheating
+        return tied_candidates[0], True
 
     # Statistical tie detected: pick candidate minimizing Euclidean distance to center (500, 500)
     tied_candidates.sort(key=lambda c: compute_distance_to_center(c.x, c.y, search_center))

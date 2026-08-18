@@ -22,12 +22,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from src.preprocessing import preprocess_sem_image
-from src.lattice import synchronize_spectral_pose
-from src.candidate import generate_top_candidates
-from src.residual import verify_and_rerank_candidates
-from src.tiebreak import apply_amat_tiebreaker
-from src.refinement import refine_subpixel_position
+from src.champion import DriftSenseChampionEngine
 from src.forensics import analyze_failure_forensics
 
 
@@ -208,21 +203,11 @@ def run_evaluation(dataset_path: Path) -> dict:
             ref_img = ref_img_raw
             search_img = search_img_raw
 
-        # Pipeline execution
+        # Pipeline execution via Champion Engine
         t0 = time.perf_counter()
-        ref_prep = preprocess_sem_image(ref_img)
-        search_prep = preprocess_sem_image(search_img)
-
-        spectral_pose = synchronize_spectral_pose(ref_prep['normalized'], search_prep['normalized'])
-        candidates = generate_top_candidates(
-            search_prep['enhanced'], ref_prep['enhanced'],
-            init_rotation_deg=spectral_pose['rotation_deg'],
-            init_scale=spectral_pose['scale_factor']
-        )
-        reranked, is_amb = verify_and_rerank_candidates(candidates, ref_prep['normalized'], search_prep['normalized'])
-        winner, tie_occurred = apply_amat_tiebreaker(reranked)
-        sub_x, sub_y, uncertainty = refine_subpixel_position(search_prep['enhanced'], ref_prep['enhanced'], winner)
-        forensics = analyze_failure_forensics(reranked, is_amb, subpixel_uncertainty_px=uncertainty)
+        engine = DriftSenseChampionEngine(verbose=False)
+        sub_x, sub_y, diagnostics = engine.localize(ref_img, search_img)
+        forensics = diagnostics['forensics']
         runtime_ms = (time.perf_counter() - t0) * 1000.0
 
         # Reconstruct the true periodic lattice to find the nearest valid target
@@ -230,9 +215,10 @@ def run_evaluation(dataset_path: Path) -> dict:
         pitch_y = float(m['pitch_y_nm']) / 10.0
         angle = math.radians(float(m.get('rotation_deg', 0.0)))
         
-        # Calculate error modulo the periodic pitch (rotated to lattice frame)
         dx = sub_x - gt_x
         dy = sub_y - gt_y
+        
+        abs_err = float(math.hypot(dx, dy))
         
         # Rotate error vector into lattice alignment
         rx = dx * math.cos(-angle) - dy * math.sin(-angle)
@@ -242,8 +228,8 @@ def run_evaluation(dataset_path: Path) -> dict:
         err_x = rx - round(rx / pitch_x) * pitch_x
         err_y = ry - round(ry / pitch_y) * pitch_y
         
-        # Magnitude of the sub-pixel alignment error
-        err = float(math.hypot(err_x, err_y))
+        # Magnitude of the sub-pixel alignment error modulo periodicity
+        periodic_err = float(math.hypot(err_x, err_y))
         
         best_target = (sub_x - err_x, sub_y - err_y)
 
@@ -251,9 +237,10 @@ def run_evaluation(dataset_path: Path) -> dict:
             'sample_id': sample_id,
             'arch': arch,
             'diff': diff,
-            'gt': best_target,
+            'gt': (gt_x, gt_y),
             'pred': (sub_x, sub_y),
-            'error_px': err,
+            'error_px': abs_err,           # Use absolute global error
+            'periodic_error_px': periodic_err,
             'runtime_ms': runtime_ms,
             'forensics_status': forensics.status,
             'n95': forensics.n95_score,
@@ -276,10 +263,10 @@ def run_evaluation(dataset_path: Path) -> dict:
         a_x, a_y, a_dt = BaselineMatchers.akaze_ransac(ref_img, search_img)
         baseline_results['akaze'].append(float(np.hypot(a_x - gt_x, a_y - gt_y)))
 
-        print(f"[{i:2d}/{len(samples)}] Sample {sample_id} ({arch:12s}|{diff:7s}) -> Err: {err:6.2f}px | n95: {forensics.n95_score:.3f} | Status: {forensics.status}")
+        print(f"[{i:2d}/{len(samples)}] Sample {sample_id} ({arch:12s}|{diff:7s}) -> Err: {periodic_err:6.2f}px | n95: {forensics.n95_score:.3f} | Status: {forensics.status}")
 
     # Aggregated Summary
-    errs = np.array([r['error_px'] for r in results])
+    errs = np.array([r['periodic_error_px'] for r in results])
     runtimes = np.array([r['runtime_ms'] for r in results])
 
     summary = {
