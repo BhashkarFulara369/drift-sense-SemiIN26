@@ -72,8 +72,10 @@ def extract_patch(
 
 
 def compute_residual_fingerprint_score(
-    ref_img: np.ndarray,
-    search_img: np.ndarray,
+    ref_res: np.ndarray,
+    search_res: np.ndarray,
+    ref_orient: np.ndarray,
+    search_orient: np.ndarray,
     candidate: Candidate
 ) -> float:
     """Compute multi-feature aperiodic residual fingerprint similarity score for a candidate.
@@ -82,9 +84,6 @@ def compute_residual_fingerprint_score(
     1. High-frequency LER residual correlation
     2. Gradient orientation alignment
     """
-    ref_res = extract_highpass_ler(ref_img)
-    search_res = extract_highpass_ler(search_img)
-
     # Extract corresponding search residual patch at coarse resolution
     search_h, search_w = int(round(ref_res.shape[0] / candidate.scale)), int(round(ref_res.shape[1] / candidate.scale))
     search_res_patch, _ = extract_patch(search_res, candidate.x, candidate.y, search_w, search_h)
@@ -104,12 +103,9 @@ def compute_residual_fingerprint_score(
     res_corr = float(np.sum(t_zero * p_zero) / denom)
 
     # 2. Gradient orientation cosine alignment on HIGH-RES maps
-    _, ref_orient, _, _ = compute_gradients(ref_img)
-    _, search_orient, _, _ = compute_gradients(search_img)
-    
     # Extract orientation patch and upsample
     search_orient_patch, _ = extract_patch(search_orient, candidate.x, candidate.y, search_w, search_h)
-    search_orient_patch_up = cv2.resize(search_orient_patch, (ref_img.shape[1], ref_img.shape[0]), interpolation=cv2.INTER_NEAREST)
+    search_orient_patch_up = cv2.resize(search_orient_patch, (ref_orient.shape[1], ref_orient.shape[0]), interpolation=cv2.INTER_NEAREST)
     
     if abs(candidate.rotation) > 0.01:
         search_orient_patch_up = cv2.warpAffine(search_orient_patch_up, M, (search_orient_patch_up.shape[1], search_orient_patch_up.shape[0]), flags=cv2.INTER_NEAREST)
@@ -157,12 +153,18 @@ def verify_and_rerank_candidates(
 
     is_ambiguous = len(ambiguous_indices) > 1
 
-    # Evaluate residual fingerprint score for ambiguous candidates (or top 5 if not ambiguous)
-    eval_indices = ambiguous_indices if is_ambiguous else list(range(min(5, len(candidates))))
+    # Precompute expensive highpass and gradient features ONCE
+    ref_res = extract_highpass_ler(ref_img)
+    search_res = extract_highpass_ler(search_img)
+    _, ref_orient, _, _ = compute_gradients(ref_img)
+    _, search_orient, _, _ = compute_gradients(search_img)
 
-    for idx in eval_indices:
-        cand = candidates[idx]
-        res_score = compute_residual_fingerprint_score(ref_img, search_img, cand)
+    # Evaluate residual fingerprint score for ALL candidates
+    # to keep composite scores consistently scaled across the board.
+    for cand in candidates:
+        res_score = compute_residual_fingerprint_score(
+            ref_res, search_res, ref_orient, search_orient, cand
+        )
         cand.local_residual_score = res_score
         cand.composite_score = weight_zncc * cand.zncc_score + weight_res * res_score
 

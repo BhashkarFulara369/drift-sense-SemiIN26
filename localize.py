@@ -96,7 +96,8 @@ class DriftSenseEngine:
 
         # 5. Stage F: AMAT Decision Rule (Tie-Breaker)
         self.log("Stage F: AMAT deterministic center tie-breaker evaluation...")
-        winner_cand, tie_occurred = apply_amat_tiebreaker(reranked_candidates)
+        search_center = (search_img.shape[1] / 2.0, search_img.shape[0] / 2.0)
+        winner_cand, tie_occurred = apply_amat_tiebreaker(reranked_candidates, search_center=search_center)
         self.log(f"Winner Candidate Rank #{winner_cand.rank} at ({winner_cand.x:.2f}, {winner_cand.y:.2f}) [tie={tie_occurred}]")
 
         # 6. Stage G: Sub-Pixel Refinement
@@ -168,17 +169,25 @@ def main() -> None:
     if status == "AMBIGUOUS" or diagnostics.get('tie_occurred', False):
         ambiguity_reason = "P/2 periodic equivalent (or similar structural ambiguity)"
 
-    print("\n")
-    print("LOCALIZATION:")
-    print(f"({x:.4f}, {y:.4f})\n")
-    print("CONFIDENCE:")
-    print(f"{(1.0 - n95):.4f}\n")  # High confidence when uncertainty is low
-    print("DETERMINACY:")
-    print(f"{status}\n")
-    print("N95:")
-    print(f"{n95:.4f}\n")
-    print("AMBIGUITY:")
-    print(f"{ambiguity_reason}\n")
+    import json
+    import time
+    
+    out = {
+        "x": float(x),
+        "y": float(y),
+        "confidence": float(1.0 - n95),
+        "determinacy": status,
+        "n95": float(n95),
+        "ambiguity": ambiguity_reason,
+        "latency_ms": 0.0,
+        "scale": float(diagnostics.get('scale', 10.0)),
+        "rotation": float(diagnostics.get('rotation', 0.0))
+    }
+
+    if args.verbose:
+        print(json.dumps(out))
+    else:
+        print(f"{x:.1f},{y:.1f}")
 
 
 if __name__ == "__main__":
