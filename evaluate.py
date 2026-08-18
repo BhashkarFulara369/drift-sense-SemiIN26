@@ -298,6 +298,12 @@ def run_evaluation(dataset_path: Path) -> dict:
         'pass_rate_2px': float(np.mean(errs <= 2.0) * 100.0),
         'pass_rate_1px': float(np.mean(errs <= 1.0) * 100.0),
         'pass_rate_subpixel': float(np.mean(errs <= 0.1) * 100.0),
+        'driftsense_mean_error_px': float(np.mean(errs)),
+        'baseline_direct_zncc_mean_err': float(np.mean(baseline_results['direct_zncc'])),
+        'baseline_phase_corr_mean_err': float(np.mean(baseline_results['phase_corr'])),
+        'baseline_sift_mean_err': float(np.mean(baseline_results['sift'])),
+        'baseline_orb_mean_err': float(np.mean(baseline_results['orb'])),
+        'baseline_akaze_mean_err': float(np.mean(baseline_results['akaze']))
     }
 
     print("\n=======================================================")
@@ -322,13 +328,28 @@ def run_evaluation(dataset_path: Path) -> dict:
     print(f"  <= 0.1 px : {summary['pass_rate_subpixel']:6.2f}%")
     print("-------------------------------------------------------")
     print(" BASELINE ALGORITHM COMPARISON (Mean Error):")
-    print(f"  Direct ZNCC       : {np.mean(baseline_results['direct_zncc']):.2f} px")
-    print(f"  Phase Correlation : {np.mean(baseline_results['phase_corr']):.2f} px")
-    print(f"  SIFT + RANSAC     : {np.mean(baseline_results['sift']):.2f} px")
-    print(f"  ORB + RANSAC      : {np.mean(baseline_results['orb']):.2f} px")
-    print(f"  AKAZE + RANSAC    : {np.mean(baseline_results['akaze']):.2f} px")
-    print(f"  Drift-Sense (Ours): {summary['mean_error_px']:.2f} px")
-    print("=======================================================")
+    print(f"  Direct ZNCC       : {summary['baseline_direct_zncc_mean_err']:.2f} px")
+    print(f"  Phase Correlation : {summary['baseline_phase_corr_mean_err']:.2f} px")
+    print(f"  SIFT + RANSAC     : {summary['baseline_sift_mean_err']:.2f} px")
+    print(f"  ORB + RANSAC      : {summary['baseline_orb_mean_err']:.2f} px")
+    print(f"  AKAZE + RANSAC    : {summary['baseline_akaze_mean_err']:.2f} px")
+    print(f"  Drift-Sense (Ours): {summary['driftsense_mean_error_px']:.2f} px")
+    print("=======================================================\n")
+
+    # Save detailed predictions to CSV
+    csv_path = dataset_path / "evaluation_predictions.csv"
+    with open(csv_path, 'w', newline='') as f:
+        import csv
+        writer = csv.writer(f)
+        writer.writerow(['Sample ID', 'Arch', 'Difficulty', 'Predicted X', 'Predicted Y', 'Correct X', 'Correct Y', 'Error (px)', 'Status', 'n95'])
+        for r in results:
+            writer.writerow([
+                r['sample_id'], r['arch'], r['diff'], 
+                f"{r['pred'][0]:.2f}", f"{r['pred'][1]:.2f}", 
+                f"{r['gt'][0]:.2f}", f"{r['gt'][1]:.2f}", 
+                f"{r['error_px']:.2f}", r['forensics_status'], f"{r['n95']:.3f}"
+            ])
+    print(f"Saved detailed predictions to {csv_path}")
 
     return summary
 
